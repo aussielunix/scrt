@@ -15,8 +15,10 @@
 package cmd
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -27,6 +29,7 @@ import (
 	"github.com/apex/log/handlers/discard"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/term"
 
 	"github.com/loderunner/scrt/backend"
 )
@@ -35,6 +38,8 @@ var (
 	configFile string
 	verbose    bool
 )
+
+const promptPasswordSentinel = "__scrt_prompt_password__"
 
 type fielder struct {
 	fields map[string]interface{}
@@ -82,7 +87,20 @@ var RootCmd = &cobra.Command{
 				return fmt.Errorf("missing storage type")
 			}
 		}
-		if !viper.IsSet(configKeyPassword) {
+		passwordChanged := false
+		if flag := cmd.Flag("password"); flag != nil {
+			passwordChanged = flag.Changed
+		}
+		password := viper.GetString(configKeyPassword)
+		if passwordChanged &&
+			(password == "" || password == promptPasswordSentinel) {
+			password, err := promptPassword(os.Stdin, os.Stderr)
+			if err != nil {
+				return err
+			}
+			viper.Set(configKeyPassword, password)
+		}
+		if viper.GetString(configKeyPassword) == "" {
 			return fmt.Errorf("missing password")
 		}
 
@@ -167,6 +185,35 @@ func addCommand(cmd *cobra.Command) {
 	cmd.FParseErrWhitelist.UnknownFlags = true
 }
 
+func promptPassword(r io.Reader, w io.Writer) (string, error) {
+	_, err := fmt.Fprint(w, "Password: ")
+	if err != nil {
+		return "", err
+	}
+
+	var password string
+	if f, ok := r.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		passwordBytes, readErr := term.ReadPassword(int(f.Fd()))
+		_, _ = fmt.Fprintln(w)
+		if readErr != nil {
+			return "", readErr
+		}
+		password = string(passwordBytes)
+	} else {
+		password, err = bufio.NewReader(r).ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+	}
+
+	password = strings.TrimRight(password, "\r\n")
+	if password == "" {
+		return "", fmt.Errorf("missing password")
+	}
+
+	return password, nil
+}
+
 func init() {
 	cobra.EnableCommandSorting = false
 
@@ -181,6 +228,7 @@ func init() {
 		StringVarP(&configFile, "config", "c", "", "configuration file")
 	RootCmd.PersistentFlags().
 		StringP("password", "p", "", "master password to unlock the store")
+	RootCmd.PersistentFlags().Lookup("password").NoOptDefVal = promptPasswordSentinel
 	err := viper.BindPFlag(
 		configKeyPassword,
 		RootCmd.PersistentFlags().Lookup("password"),

@@ -15,6 +15,8 @@
 package cmd
 
 import (
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/golang/mock/gomock"
@@ -46,10 +48,82 @@ func TestRootCmd(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+}
 
-	viper.Set(configKeyPassword, "")
+func TestRootCmdPromptPassword(t *testing.T) {
+	hijack()
+	defer restore()
+
+	viper.Reset()
+
+	fs := afero.NewMemMapFs()
+	viper.SetFs(fs)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockBackend := NewMockBackend(ctrl)
+	backend.Backends["mock"] = newMockFactory(mockBackend)
+
+	viper.Set(configKeyStorage, "mock")
+	RootCmd.PersistentFlags().Lookup("password").Changed = false
+
+	err := RootCmd.PersistentFlags().Set("password", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = RootCmd.PersistentFlags().Set("password", "")
+		RootCmd.PersistentFlags().Lookup("password").Changed = false
+	}()
+
+	_, err = hijackStdin.WriteString("toto\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = hijackStdin.Close()
+
 	err = RootCmd.PersistentPreRunE(RootCmd, []string{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got := viper.GetString(configKeyPassword); got != "toto" {
+		t.Fatalf("expected prompted password, got %q", got)
+	}
+}
+
+func TestPromptPasswordEmpty(t *testing.T) {
+	_, err := promptPassword(strings.NewReader("\n"), io.Discard)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestPromptPassword(t *testing.T) {
+	password, err := promptPassword(strings.NewReader("toto\n"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if password != "toto" {
+		t.Fatalf("expected toto, got %q", password)
+	}
+}
+
+func TestRootCmdPasswordFlagWithoutValue(t *testing.T) {
+	RootCmd.PersistentFlags().Lookup("password").Changed = false
+
+	err := RootCmd.ParseFlags([]string{"list", "--password"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !RootCmd.Flag("password").Changed {
+		t.Fatal("expected password flag to be marked as changed")
+	}
+	if got := RootCmd.Flag("password").Value.String(); got != promptPasswordSentinel {
+		t.Fatalf("expected prompt sentinel, got %q", got)
+	}
+
+	_ = RootCmd.PersistentFlags().Set("password", "")
+	RootCmd.PersistentFlags().Lookup("password").Changed = false
 }
