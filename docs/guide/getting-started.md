@@ -16,6 +16,14 @@ scrt init --storage=local \
           --local-path=store.scrt
 ```
 
+You can also omit the password value and let `scrt` prompt for it interactively:
+
+```shell
+scrt init --storage=local \
+          --password \
+          --local-path=store.scrt
+```
+
 This will create an empty store, in a `store.scrt` file. The file is encrypted using a secret key derived from the given password. (The password in these examples is very weak. In a production setting, do not use such a simple password. Follow the [NIST recommandations](https://auth0.com/blog/dont-pass-on-the-new-nist-password-guidelines/) for good password creation.)
 
 ::: warning
@@ -37,6 +45,8 @@ export SCRT_LOCAL_PATH=store.scrt
 ```
 
 In the following examples, we assume the environment variables have been set. See the [Configuration reference](/guide/configuration.md) for advanced configuration options.
+
+If you prefer not to pass the password on the command line, you can also add `--password` without a value to commands such as `scrt list` or `scrt get hello` and enter it interactively when prompted.
 
 #### Related pages
 

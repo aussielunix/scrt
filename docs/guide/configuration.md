@@ -8,6 +8,8 @@ Repeating the global options each time the `scrt` command is invoked can be verb
 
 To prevent this, scrt can be configured with a configuration file or using environment variables.
 
+When you do want to provide the password on the command line, `--password` can also be passed without a value. In that case, `scrt` will prompt for the password interactively and hide the typed characters.
+
 `scrt` configuration settings follow an order of precedence. Each item takes precedence over the item below it:
 
 - command-line flags

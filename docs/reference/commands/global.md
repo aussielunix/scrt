@@ -38,3 +38,13 @@ Flags:
 **`--storage`:** storage type, see Reference for details.
 
 **`-p`**, **`--password`:** password to the store. The argument will be used to derive a key, to decrypt and encrypt the data in the store.
+
+If `--password` is provided without a value, `scrt` will prompt for the password interactively and will not echo the typed characters to the terminal.
+
+### Example
+
+Prompt for the password interactively:
+
+```shell
+scrt list --password
+```
