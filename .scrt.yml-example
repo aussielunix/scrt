@@ -1,0 +1,29 @@
+# Example scrt configuration.
+#
+# Use only one storage backend section at a time in a real config file.
+# This file shows every supported option for reference.
+
+# Global options
+storage: local
+password: example-password
+verbose: false
+
+# Local storage options
+local:
+  path: ./store.scrt
+
+# S3 storage options
+s3:
+  bucket-name: scrt-bucket
+  key: /store.scrt
+  region: ap-southeast-2
+  endpoint-url: https://s3.example.com
+
+# Git storage options
+git:
+  url: git@github.com:githubuser/secrets.git
+  path: store.scrt
+  local-path: ~/.scrt/repos/secrets
+  branch: main
+  checkout: main
+  message: update secrets
