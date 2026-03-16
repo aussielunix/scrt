@@ -127,3 +127,15 @@ func TestRootCmdPasswordFlagWithoutValue(t *testing.T) {
 	_ = RootCmd.PersistentFlags().Set("password", "")
 	RootCmd.PersistentFlags().Lookup("password").Changed = false
 }
+
+func TestRootCmdRegistersBackendFlags(t *testing.T) {
+	if RootCmd.PersistentFlags().Lookup("git-local-path") == nil {
+		t.Fatal("expected git-local-path flag to be registered")
+	}
+	if RootCmd.PersistentFlags().Lookup("local-path") == nil {
+		t.Fatal("expected local-path flag to be registered")
+	}
+	if RootCmd.PersistentFlags().Lookup("s3-bucket-name") == nil {
+		t.Fatal("expected s3-bucket-name flag to be registered")
+	}
+}

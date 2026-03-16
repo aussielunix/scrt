@@ -103,6 +103,7 @@ cd docs && npx prettier --write .
     --password=test \
     --git-url=git@github.com:<user>/<repo>.git \
     --git-path=store.scrt \
+    --git-local-path=~/.scrt/repos/test \
     --verbose
 ```
 

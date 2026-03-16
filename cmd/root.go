@@ -105,21 +105,9 @@ var RootCmd = &cobra.Command{
 		}
 
 		storage := viper.GetString(configKeyStorage)
-		factory, ok := backend.Backends[storage]
+		_, ok := backend.Backends[storage]
 		if !ok {
 			return fmt.Errorf("unknown storage type: %s", storage)
-		}
-
-		// Add backend flags to command's flagset, bind to config and re-parse
-		cmd.FParseErrWhitelist.UnknownFlags = false
-		cmd.Flags().AddFlagSet(factory.Flags())
-		err = viper.BindPFlags(cmd.Flags())
-		if err != nil {
-			return err
-		}
-		err = cmd.ParseFlags(os.Args[1:])
-		if err != nil {
-			return cmd.FlagErrorFunc()(cmd, err)
 		}
 
 		// Log configuration
@@ -241,6 +229,13 @@ func init() {
 		configKeyStorage,
 		RootCmd.PersistentFlags().Lookup("storage"),
 	)
+	if err != nil {
+		panic(err)
+	}
+	for _, name := range backend.BackendNameList {
+		RootCmd.PersistentFlags().AddFlagSet(backend.Backends[name].Flags())
+	}
+	err = viper.BindPFlags(RootCmd.PersistentFlags())
 	if err != nil {
 		panic(err)
 	}

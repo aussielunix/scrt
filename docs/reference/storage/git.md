@@ -4,13 +4,15 @@ sidebarDepth: 0
 
 # Git
 
-Use the `git` storage type to create and access a store in a git repository. `scrt` will clone the repository in memory, checkout the given branch (or the default branch if no branch is given), read the store in the file at the given path, and will commit and push any modifications to the remote.
+Use the `git` storage type to create and access a store in a git repository. `scrt` keeps a local clone of the repository on disk, uses that clone to read the store file, and commits and pushes any modifications back to the remote.
 
 ### Options
 
 **`--git-url`** (required): a git-compatible repository URL. Most git-compatible URLs and protocols can be used. See [`git clone` documentation](https://git-scm.com/docs/git-clone#_git_urls) to learn more.
 
 **`--git-path`** (required): the path to the store file inside the the git repository, relative to the repository root. A repository can contain multiple scrt stores, at different paths.
+
+**`--git-local-path`** (required): the local path where `scrt` will create and reuse the repository clone.
 
 **`--git-branch`:** the name of the branch to checkout after cloning (or initializing). If no branch is given, the default branch from the remote will be used, or `main` if a new repository is initialized.
 
@@ -24,7 +26,8 @@ Use the `git` storage type to create and access a store in a git repository. `sc
 scrt init --storage=git \
           --password=p4ssw0rd \
           --git-url=git@github.com:githubuser/secrets.git \
-          --git-path=store.scrt
+          --git-path=store.scrt \
+          --git-local-path=~/.scrt/repos/secrets
 ```
 
 ::: tip

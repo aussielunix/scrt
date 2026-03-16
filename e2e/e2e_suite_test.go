@@ -45,6 +45,7 @@ func TestE2e(t *testing.T) {
 var (
 	executablePath string
 	tmpLocalDir    string
+	tmpGitDir      string
 )
 
 var _ = BeforeSuite(func() {
@@ -57,6 +58,7 @@ var _ = BeforeSuite(func() {
 var _ = AfterSuite(func() {
 	gexec.CleanupBuildArtifacts()
 	Expect(os.RemoveAll(tmpLocalDir)).To(Succeed())
+	Expect(os.RemoveAll(tmpGitDir)).To(Succeed())
 })
 
 var _ = Describe("scrt", func() {
@@ -125,26 +127,34 @@ var _ = Describe("scrt", func() {
 		)
 	})
 	Context("for git backend", func() {
+		var err error
+		tmpGitDir, err = os.MkdirTemp("", "scrt-e2e-git-*")
+		Expect(err).NotTo(HaveOccurred())
+
 		extraArgs := [4]map[string]string{
 			{
-				"git.url":    os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
-				"git.branch": os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
-				"git.path":   "store-args.scrt",
+				"git.url":        os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
+				"git.branch":     os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
+				"git.path":       "store-args.scrt",
+				"git.local-path": filepath.Join(tmpGitDir, "args"),
 			},
 			{
-				"git.url":    os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
-				"git.branch": os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
-				"git.path":   "store-env.scrt",
+				"git.url":        os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
+				"git.branch":     os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
+				"git.path":       "store-env.scrt",
+				"git.local-path": filepath.Join(tmpGitDir, "env"),
 			},
 			{
-				"git.url":    os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
-				"git.branch": os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
-				"git.path":   "store-implicit-conf.scrt",
+				"git.url":        os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
+				"git.branch":     os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
+				"git.path":       "store-implicit-conf.scrt",
+				"git.local-path": filepath.Join(tmpGitDir, "implicit-conf"),
 			},
 			{
-				"git.url":    os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
-				"git.branch": os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
-				"git.path":   "store-explicit-conf.scrt",
+				"git.url":        os.Getenv("SCRT_TEST_E2E_GIT_REPOSITORY_URL"),
+				"git.branch":     os.Getenv("SCRT_TEST_E2E_GIT_BRANCH"),
+				"git.path":       "store-explicit-conf.scrt",
+				"git.local-path": filepath.Join(tmpGitDir, "explicit-conf"),
 			},
 		}
 

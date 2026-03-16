@@ -20,17 +20,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/go-git/go-billy/v5"
-	"github.com/go-git/go-billy/v5/memfs"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	"github.com/go-git/go-git/v5/plumbing/transport/ssh"
-	"github.com/go-git/go-git/v5/storage/memory"
 	"github.com/kevinburke/ssh_config"
 	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/pflag"
@@ -47,6 +47,11 @@ func init() {
 		"git-path",
 		"",
 		"path of the store in the repository (required)",
+	)
+	gitFlagSet.String(
+		"git-local-path",
+		"",
+		"local path for the git repository clone (required)",
 	)
 	gitFlagSet.String(
 		"git-branch",
@@ -66,10 +71,11 @@ func init() {
 }
 
 type gitBackend struct {
-	path    string
-	message string
-	repo    *git.Repository
-	fs      billy.Filesystem
+	path, localPath string
+	message         string
+	repo            *git.Repository
+	fs              billy.Filesystem
+	auth            transport.AuthMethod
 }
 
 type gitFactory struct{}
@@ -128,6 +134,24 @@ func newGit(ctx context.Context, conf map[string]interface{}) (Backend, error) {
 	}
 	logger = logger.WithField("path", path)
 
+	opt = readOpt("git", "local-path", conf)
+	if opt == nil || opt == "" {
+		return nil, fmt.Errorf("missing local path")
+	}
+	localPath, ok := opt.(string)
+	if !ok {
+		return nil, fmt.Errorf("local path is not a string: (%T)%s", opt, opt)
+	}
+	localPath, err := homedir.Expand(localPath)
+	if err != nil {
+		return nil, err
+	}
+	localPath, err = filepath.Abs(localPath)
+	if err != nil {
+		return nil, err
+	}
+	logger = logger.WithField("local_path", localPath)
+
 	var branch string
 	opt = readOpt("git", "branch", conf)
 	if opt != nil && opt != "" {
@@ -160,11 +184,12 @@ func newGit(ctx context.Context, conf map[string]interface{}) (Backend, error) {
 	logger.Info("using git repository")
 
 	g := gitBackend{
-		path:    path,
-		message: message,
+		path:      path,
+		localPath: localPath,
+		message:   message,
 	}
 
-	err := g.clone(ctx, url, branch)
+	err = g.cloneOrOpen(ctx, url, branch)
 	// If the repo is empty, init a new repo
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 		logger.Info("repository is empty")
@@ -213,6 +238,15 @@ func (g gitBackend) SaveContext(ctx context.Context, data []byte) error {
 	logger := getLogger(ctx)
 
 	logger = logger.WithField("path", g.path)
+
+	dir := path.Dir(g.path)
+	if dir != "." {
+		logger.WithField("dir", dir).Info("ensuring store directory exists")
+		err := g.fs.MkdirAll(dir, 0o700)
+		if err != nil {
+			return err
+		}
+	}
 
 	logger.Info("opening file in git repository")
 	f, err := g.fs.OpenFile(g.path, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0o700)
@@ -277,8 +311,9 @@ func (g gitBackend) SaveContext(ctx context.Context, data []byte) error {
 	logger.Info("pushing changes to git remote")
 	err = g.repo.Push(&git.PushOptions{
 		RemoteName: git.DefaultRemoteName,
+		Auth:       g.auth,
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return err
 	}
 
@@ -310,28 +345,47 @@ func (g gitBackend) LoadContext(ctx context.Context) ([]byte, error) {
 	return data, nil
 }
 
-func (g *gitBackend) clone(ctx context.Context, url, branch string) error {
+func (g *gitBackend) cloneOrOpen(ctx context.Context, url, branch string) error {
 	logger := getLogger(ctx)
 	auths, err := buildAuths(ctx, url)
 	if err != nil {
 		return err
 	}
 
+	err = g.openLocal(ctx)
+	if err == nil {
+		if branch != "" {
+			err = g.checkoutBranch(ctx, branch)
+			if err != nil {
+				return err
+			}
+		}
+		return g.pull(ctx, branch, auths)
+	}
+	if !errors.Is(err, git.ErrRepositoryNotExists) {
+		return err
+	}
+
 	logger = logger.WithField("url", url)
-	storage := memory.NewStorage()
-	g.fs = memfs.New()
+	err = os.MkdirAll(filepath.Dir(g.localPath), 0o700)
+	if err != nil {
+		return err
+	}
+
 	var referenceName plumbing.ReferenceName
 	if branch != "" {
 		logger = logger.WithField("branch", branch)
 		referenceName = plumbing.NewBranchReferenceName(branch)
 	}
 
-	logger.Info("cloning git repository in memory")
+	logger.WithField("local_path", g.localPath).
+		Info("cloning git repository locally")
 	if len(auths) > 0 {
 		for _, auth := range auths {
-			g.repo, err = git.Clone(
-				storage,
-				g.fs,
+			g.repo, err = git.PlainCloneContext(
+				ctx,
+				g.localPath,
+				false,
 				&git.CloneOptions{
 					URL:           url,
 					ReferenceName: referenceName,
@@ -339,18 +393,26 @@ func (g *gitBackend) clone(ctx context.Context, url, branch string) error {
 				},
 			)
 			if err == nil {
-				return nil
+				g.auth = auth
+				return g.openWorktree()
+			}
+			if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+				return err
 			}
 		}
 	} else {
-		g.repo, err = git.Clone(
-			storage,
-			g.fs,
+		g.repo, err = git.PlainCloneContext(
+			ctx,
+			g.localPath,
+			false,
 			&git.CloneOptions{
 				URL:           url,
 				ReferenceName: referenceName,
 			},
 		)
+		if err == nil {
+			return g.openWorktree()
+		}
 	}
 
 	return err
@@ -360,10 +422,14 @@ func (g *gitBackend) init(ctx context.Context, url, branch string) error {
 	logger := getLogger(ctx)
 	var err error
 
-	logger.Info("initializing git repository in memory")
-	storage := memory.NewStorage()
-	g.fs = memfs.New()
-	g.repo, err = git.Init(storage, g.fs)
+	err = os.MkdirAll(g.localPath, 0o700)
+	if err != nil {
+		return err
+	}
+
+	logger.WithField("local_path", g.localPath).
+		Info("initializing local git repository")
+	g.repo, err = git.PlainInit(g.localPath, false)
 	if err != nil {
 		return err
 	}
@@ -394,15 +460,15 @@ func (g *gitBackend) init(ctx context.Context, url, branch string) error {
 		plumbing.HEAD,
 		plumbing.NewBranchReferenceName(branch),
 	)
-	err = storage.SetReference(ref)
+	err = g.repo.Storer.SetReference(ref)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	return g.openWorktree()
 }
 
-func buildAuths(ctx context.Context, url string) ([]ssh.AuthMethod, error) {
+func buildAuths(ctx context.Context, url string) ([]transport.AuthMethod, error) {
 	logger := getLogger(ctx)
 	e, err := transport.NewEndpoint(url)
 	if err != nil {
@@ -421,10 +487,10 @@ func buildAuths(ctx context.Context, url string) ([]ssh.AuthMethod, error) {
 			return nil, err
 		}
 		logger.Info("SSH config not found, using default authentication")
-		return []ssh.AuthMethod{defaultAuth}, nil
+		return []transport.AuthMethod{defaultAuth}, nil
 	}
 
-	auths := make([]ssh.AuthMethod, 0, 2)
+	auths := make([]transport.AuthMethod, 0, 2)
 
 	identitiesOnly := sshConfig.Get(e.Host, "IdentitiesOnly")
 	if identitiesOnly != "yes" {
@@ -458,6 +524,94 @@ func buildAuths(ctx context.Context, url string) ([]ssh.AuthMethod, error) {
 	}
 
 	return nil, fmt.Errorf("no valid authentication method")
+}
+
+func (g *gitBackend) openLocal(ctx context.Context) error {
+	logger := getLogger(ctx)
+	logger.WithField("local_path", g.localPath).Info("opening local git repository")
+
+	repo, err := git.PlainOpen(g.localPath)
+	if err != nil {
+		return err
+	}
+	g.repo = repo
+	return g.openWorktree()
+}
+
+func (g *gitBackend) openWorktree() error {
+	w, err := g.repo.Worktree()
+	if err != nil {
+		return err
+	}
+	g.fs = w.Filesystem
+	return nil
+}
+
+func (g *gitBackend) checkoutBranch(ctx context.Context, branch string) error {
+	logger := getLogger(ctx)
+	w, err := g.repo.Worktree()
+	if err != nil {
+		return err
+	}
+
+	refName := plumbing.NewBranchReferenceName(branch)
+	err = w.Checkout(&git.CheckoutOptions{Branch: refName})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, plumbing.ErrReferenceNotFound) {
+		return err
+	}
+
+	remoteRefName := plumbing.NewRemoteReferenceName(git.DefaultRemoteName, branch)
+	remoteRef, err := g.repo.Reference(remoteRefName, true)
+	if err != nil {
+		return err
+	}
+
+	logger.WithField("branch", branch).Info("creating local branch from remote")
+	return w.Checkout(&git.CheckoutOptions{
+		Branch: refName,
+		Hash:   remoteRef.Hash(),
+		Create: true,
+	})
+}
+
+func (g *gitBackend) pull(
+	ctx context.Context,
+	branch string,
+	auths []transport.AuthMethod,
+) error {
+	logger := getLogger(ctx)
+	w, err := g.repo.Worktree()
+	if err != nil {
+		return err
+	}
+
+	opts := git.PullOptions{RemoteName: git.DefaultRemoteName}
+	if branch != "" {
+		opts.ReferenceName = plumbing.NewBranchReferenceName(branch)
+		opts.SingleBranch = true
+	}
+
+	logger.WithField("local_path", g.localPath).Info("pulling git remote updates")
+	if len(auths) > 0 {
+		for _, auth := range auths {
+			opts.Auth = auth
+			err = w.PullContext(ctx, &opts)
+			if err == nil || errors.Is(err, git.NoErrAlreadyUpToDate) {
+				g.auth = auth
+				return nil
+			}
+		}
+		return err
+	}
+
+	err = w.PullContext(ctx, &opts)
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return err
+	}
+	return nil
 }
 
 func (g *gitBackend) checkout(ctx context.Context, checkout string) error {
