@@ -16,10 +16,13 @@ package cmd
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/golang/mock/gomock"
+	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 
@@ -137,5 +140,134 @@ func TestRootCmdRegistersBackendFlags(t *testing.T) {
 	}
 	if RootCmd.PersistentFlags().Lookup("s3-bucket-name") == nil {
 		t.Fatal("expected s3-bucket-name flag to be registered")
+	}
+}
+
+func TestReadConfigAllowsMissingExplicitConfigFile(t *testing.T) {
+	viper.Reset()
+	viper.SetFs(afero.NewOsFs())
+
+	oldConfigFile := configFile
+	configFile = filepath.Join(t.TempDir(), "missing.yml")
+	defer func() {
+		configFile = oldConfigFile
+	}()
+
+	err := readConfig(RootCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadConfigUsesLocalConfigFirst(t *testing.T) {
+	viper.Reset()
+	viper.SetFs(afero.NewOsFs())
+	oldConfigFile := configFile
+	configFile = ""
+	defer func() {
+		configFile = oldConfigFile
+	}()
+
+	root := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(root, "config.yml"),
+		[]byte("storage: local\npassword: localpass\n"),
+		0o600,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	homeDir := t.TempDir()
+	err = os.MkdirAll(filepath.Join(homeDir, ".scrt"), 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.WriteFile(
+		filepath.Join(homeDir, ".scrt", "config.yml"),
+		[]byte("storage: git\npassword: homepass\n"),
+		0o600,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+	err = os.Chdir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", homeDir)
+	homedir.Reset()
+
+	err = readConfig(RootCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := viper.GetString(configKeyStorage); got != "local" {
+		t.Fatalf("expected local config, got %q", got)
+	}
+	if got := viper.GetString(configKeyPassword); got != "localpass" {
+		t.Fatalf("expected local password, got %q", got)
+	}
+}
+
+func TestReadConfigUsesHomeConfigWhenLocalMissing(t *testing.T) {
+	viper.Reset()
+	viper.SetFs(afero.NewOsFs())
+	oldConfigFile := configFile
+	configFile = ""
+	defer func() {
+		configFile = oldConfigFile
+	}()
+
+	root := t.TempDir()
+	homeDir := t.TempDir()
+	err := os.MkdirAll(filepath.Join(homeDir, ".scrt"), 0o700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = os.WriteFile(
+		filepath.Join(homeDir, ".scrt", "config.yml"),
+		[]byte("storage: git\npassword: homepass\n"),
+		0o600,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+	err = os.Chdir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("HOME", homeDir)
+	homedir.Reset()
+
+	err = readConfig(RootCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := viper.GetString(configKeyStorage); got != "git" {
+		t.Fatalf("expected home config, got %q", got)
+	}
+	if got := viper.GetString(configKeyPassword); got != "homepass" {
+		t.Fatalf("expected home password, got %q", got)
 	}
 }

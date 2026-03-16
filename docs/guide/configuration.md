@@ -44,7 +44,9 @@ git:
   local-path: ~/.scrt/repos/secrets
 ```
 
-If the `--config` option is given to the command line, `scrt` will try to load the configuration from a file at the given path. Otherwise, it looks for any file named `.scrt`, `.scrt.yml` or `.scrt.yaml` in the current working directory, then recursively in the parent directory up to the root of the filesystem. If such a file is found, its values are loaded as configuration.
+If the `--config` option is given to the command line, `scrt` will try to load the configuration from a file at the given path. Otherwise, it first looks for `config.yml` in the current working directory. If that file does not exist, it then looks for `~/.scrt/config.yml`.
+
+You can also bootstrap a new configuration file with `scrt init --config=...`. When `init` succeeds, `scrt` will create or overwrite the config file and populate it with the options that were explicitly provided as CLI flags.
 
 This can be useful in configuring the location of a store for a project. By adding a `.scrt` file at the root of the project repository. `scrt` can then be used in CI and other DevOps tools.
 

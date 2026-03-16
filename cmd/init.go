@@ -16,9 +16,15 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
+	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v2"
 
 	"github.com/loderunner/scrt/backend"
 	"github.com/loderunner/scrt/store"
@@ -68,10 +74,86 @@ var initCmd = &cobra.Command{
 			return fmt.Errorf("could not save data to store: %w", err)
 		}
 
+		err = writeConfigFile(cmd)
+		if err != nil {
+			return fmt.Errorf("could not write configuration file: %w", err)
+		}
+
 		fmt.Println("store initialized")
 
 		return nil
 	},
+}
+
+func writeConfigFile(cmd *cobra.Command) error {
+	if configFile == "" {
+		return nil
+	}
+
+	configPath, err := homedir.Expand(configFile)
+	if err != nil {
+		return err
+	}
+	configPath, err = filepath.Abs(configPath)
+	if err != nil {
+		return err
+	}
+
+	config := make(map[string]interface{})
+	seen := make(map[string]bool)
+	addFlag := func(name string) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+
+		switch name {
+		case "config", "help", "overwrite", "version":
+			return
+		case configKeyPassword, configKeyStorage, "verbose":
+			config[name] = viper.Get(name)
+			return
+		}
+
+		i := strings.Index(name, "-")
+		if i == -1 {
+			return
+		}
+
+		prefix := name[:i]
+		key := name[i+1:]
+		section, ok := config[prefix]
+		if !ok {
+			section = make(map[string]interface{})
+			config[prefix] = section
+		}
+		section.(map[string]interface{})[key] = viper.Get(name)
+	}
+
+	visit := func(flagSet *pflag.FlagSet) {
+		flagSet.VisitAll(func(flag *pflag.Flag) {
+			if flag.Changed {
+				addFlag(flag.Name)
+			}
+		})
+	}
+
+	visit(cmd.Flags())
+	visit(cmd.InheritedFlags())
+	visit(RootCmd.PersistentFlags())
+	visit(cmd.LocalFlags())
+
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return err
+	}
+
+	err = os.MkdirAll(filepath.Dir(configPath), 0o700)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(configPath, data, 0o600)
 }
 
 func init() {

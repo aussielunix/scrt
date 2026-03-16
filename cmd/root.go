@@ -27,6 +27,7 @@ import (
 	"github.com/apex/log"
 	"github.com/apex/log/handlers/cli"
 	"github.com/apex/log/handlers/discard"
+	homedir "github.com/mitchellh/go-homedir"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/term"
@@ -137,30 +138,35 @@ var RootCmd = &cobra.Command{
 
 func readConfig(_ *cobra.Command) error {
 	if configFile != "" {
-		viper.SetConfigFile(configFile)
+		path, err := homedir.Expand(configFile)
+		if err != nil {
+			return err
+		}
+		viper.SetConfigFile(path)
 	} else {
-		// Read configuration from .scrt file if exists, recursively searching
-		// for .scrt file in parent directories until root is reached
-		viper.SetConfigName(".scrt")
-		viper.SetConfigType("yaml")
 		dir, err := os.Getwd()
 		if err != nil {
 			return err
 		}
-		viper.AddConfigPath(dir)
-		for {
-			parentDir := filepath.Dir(dir)
-			if dir == parentDir {
-				break
+
+		localConfigPath := filepath.Join(dir, "config.yml")
+		if _, err = os.Stat(localConfigPath); err == nil {
+			viper.SetConfigFile(localConfigPath)
+		} else if !os.IsNotExist(err) {
+			return err
+		} else {
+			homeConfigPath, err := homedir.Expand("~/.scrt/config.yml")
+			if err != nil {
+				return err
 			}
-			dir = parentDir
-			viper.AddConfigPath(dir)
+			viper.SetConfigFile(homeConfigPath)
 		}
 	}
 
 	err := viper.ReadInConfig()
 	if err != nil {
-		if !errors.As(err, &viper.ConfigFileNotFoundError{}) {
+		if !errors.As(err, &viper.ConfigFileNotFoundError{}) &&
+			!os.IsNotExist(err) {
 			return err
 		}
 	}
